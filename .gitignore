@@ -1,0 +1,27 @@
+# ─── .NET Backend ─────────────────────────────────
+backend/**/bin/
+backend/**/obj/
+backend/**/*.db
+backend/**/*.db-shm
+backend/**/*.db-wal
+backend/**/appsettings.Development.json
+
+# ─── React Frontend ───────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ─── OS / IDE ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# ─── Logs ─────────────────────────────────────────
+*.log
+/tmp/
