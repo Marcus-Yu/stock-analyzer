@@ -28,7 +28,7 @@ export function WatchlistCard({ stock, onClick, index }: WatchlistCardProps) {
             {stock.companyName || stock.ticker}
           </p>
         </div>
-        <span className={`text-2xl font-black flex-shrink-0 ${isPositive ? 'text-green-500' : 'text-red-400'}`}>
+        <span className={`text-2xl font-black flex-shrink-0 ${isPositive ? 'text-positive' : 'text-negative'}`}>
           {isPositive ? '+' : ''}{stock.priceChangePercent.toFixed(1)}%
         </span>
       </div>

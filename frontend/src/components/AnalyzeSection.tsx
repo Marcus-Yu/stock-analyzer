@@ -11,16 +11,18 @@ interface AnalyzeSectionProps {
 }
 
 function getSentimentLabel(rating: number): string {
-  if (rating >= 90) return 'Prime';
-  if (rating >= 70) return 'Favorable';
-  if (rating >= 40) return 'Neutral';
-  if (rating >= 20) return 'Cautious';
-  return 'Adverse';
+  if (rating >= 85) return 'Strong Buy';
+  if (rating >= 70) return 'Medium Buy';
+  if (rating >= 55) return 'Weak Buy';
+  if (rating >= 45) return 'Hold';
+  if (rating >= 30) return 'Weak Sell';
+  if (rating >= 15) return 'Medium Sell';
+  return 'Strong Sell';
 }
 
 function getSentimentColor(rating: number): string {
-  if (rating >= 70) return 'text-green-500';
-  if (rating >= 40) return 'text-yellow-500';
+  if (rating >= 55) return 'text-green-600';
+  if (rating >= 45) return 'text-yellow-600';
   return 'text-red-400';
 }
 
@@ -43,7 +45,7 @@ export function AnalyzeSection({ onSearch, loading, error, result, onViewDetail 
         <div>
           <h2 className="text-5xl md:text-7xl font-black leading-[0.9] tracking-tighter mb-6">Analyze</h2>
           <p className="text-xl md:text-2xl font-medium text-white/80 mb-8 max-w-lg leading-relaxed">
-            Definitive intelligence powered by real-time market sentiment and institutional data flows.
+            GPT-5.4 analysis powered by real-time market sentiment and institutional data flows.
           </p>
 
           <form onSubmit={handleSubmit} className="flex flex-col space-y-6 max-w-md">
@@ -131,7 +133,7 @@ export function AnalyzeSection({ onSearch, loading, error, result, onViewDetail 
               <div className="flex flex-col items-center py-8 text-center">
                 <span className="material-symbols-outlined text-6xl text-muted/30 mb-4">query_stats</span>
                 <p className="text-lg font-medium text-muted/60">
-                  Enter a ticker symbol to run an AI-powered institutional analysis
+                  Enter a ticker symbol to run a GPT-5.4 institutional analysis
                 </p>
               </div>
             </>

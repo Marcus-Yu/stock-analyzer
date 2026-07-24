@@ -6,8 +6,8 @@
 @tailwind utilities;
 
 body {
-  background-color: #FFFDF5;
-  color: #1b1b21;
+  background-color: theme('colors.cream');
+  color: theme('colors.text-main');
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -55,4 +55,35 @@ body {
 }
 .animate-pulse-soft {
   animation: pulse-soft 2s ease-in-out infinite;
+}
+
+/* Circular Progress Ring Styles */
+.score-ring {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+
+.score-ring svg {
+  transform: rotate(-90deg);
+}
+
+.score-ring circle {
+  fill: transparent;
+  stroke-width: 4;
+}
+
+.score-ring .ring-bg {
+  stroke: #e5e7eb; /* Light grey for contrast */
+}
+
+.score-ring .ring-progress {
+  stroke: #97d5ff; /* Sky blue */
+  stroke-dasharray: 176; /* 2 * pi * r (r=28) */
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease-in-out;
+}
+
+.score-text {
+  color: #97d5ff; /* Sky blue */
 }

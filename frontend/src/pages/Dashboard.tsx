@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStockAnalysis } from '../hooks/useStockAnalysis';
-import { Header } from '../components/Header';
 import { WatchlistCard } from '../components/WatchlistCard';
 import { AnalyzeSection } from '../components/AnalyzeSection';
 import { StockListCard } from '../components/StockListCard';
@@ -53,7 +52,6 @@ export function Dashboard() {
 
   return (
     <>
-      <Header />
       <div className="px-6 md:px-16 py-12 space-y-20 max-w-screen-2xl mx-auto">
 
         {/* Detail View */}
@@ -69,7 +67,7 @@ export function Dashboard() {
         {/* Watchlist */}
         <section>
           <div className="mb-8">
-            <h2 className="text-5xl font-black text-surface tracking-tighter mb-2">Watchlist</h2>
+            <h2 className="text-5xl font-black text-text-main tracking-tighter mb-2">Watchlist</h2>
             <p className="text-lg text-muted font-medium">
               {watchlist.length > 0
                 ? 'Top-rated stocks based on AI analysis.'
@@ -119,7 +117,7 @@ export function Dashboard() {
                   <p className="text-sm mt-1 opacity-60">Fetching real-time quotes</p>
                 </div>
               ) : movers.length > 0 ? (
-                movers.map((stock, idx) => (
+                movers.slice(0, 5).map((stock, idx) => (
                   <StockListCard key={stock.ticker} stock={stock} onClick={handleCardClick} index={idx} />
                 ))
               ) : (
@@ -141,7 +139,7 @@ export function Dashboard() {
                   <p className="text-lg font-bold">Scanning ETFs...</p>
                 </div>
               ) : steady.length > 0 ? (
-                steady.map((stock, idx) => (
+                steady.slice(0, 5).map((stock, idx) => (
                   <StockListCard key={stock.ticker} stock={stock} onClick={handleCardClick} index={idx} />
                 ))
               ) : (
@@ -157,7 +155,7 @@ export function Dashboard() {
 
       {/* Footer */}
       <footer className="px-16 py-20 text-center opacity-30">
-        <p className="text-xs font-black tracking-[0.4em] uppercase">Spark Intelligence 2024</p>
+        <p className="text-xs font-black tracking-[0.4em] uppercase">Spark Intelligence 2025 - MYU</p>
       </footer>
     </>
   );

@@ -5,6 +5,7 @@ export interface StockAnalysisResult {
   priceChangePercent: number | null;
   rating: number;
   ratingLabel: string;
+  analysis_type?: 'Stock' | 'ETF/Index' | string;
   technical_moat: string;
   moat_label: string;
   catalysts: string;
@@ -16,9 +17,22 @@ export interface StockAnalysisResult {
   risk_assessment: string;
   risk_label: string;
   summary_verdict: string;
+  macro_context?: string;
+  financial_metrics_review?: string;
+  comparative_analysis?: string;
+  final_verdict?: string;
+  price_estimates?: PriceEstimate[];
   metric_assessments: Record<string, 'favorable' | 'unfavorable' | 'neutral'>;
   keyMetrics: KeyMetrics;
   analyzedAt: string;
+}
+
+export interface PriceEstimate {
+  timeframe: string;
+  lower_estimate: number | null;
+  moderate_estimate: number | null;
+  higher_estimate: number | null;
+  assumptions: string;
 }
 
 export interface KeyMetrics {

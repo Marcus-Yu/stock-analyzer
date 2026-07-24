@@ -136,4 +136,5 @@ public class AggregatedFinancialData
     public List<CompetitorData> Competitors { get; set; } = new();
     public FinnhubQuote? Quote { get; set; }
     public FinnhubProfile? Profile { get; set; }
+    public string? LearningContextJson { get; set; }
 }

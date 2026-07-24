@@ -13,16 +13,22 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // Database
+var connectionString = builder.Configuration["STOCKAI_CONNECTION_STRING"] ?? builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") 
-        ?? "Data Source=stockanalyzer.db"));
+    options.UseNpgsql(connectionString));
 
 // HTTP clients for external services
 builder.Services.AddHttpClient<IFinnhubService, FinnhubService>();
-builder.Services.AddHttpClient<IOllamaService, OllamaService>();
+builder.Services.AddHttpClient<IAnalysisAiService, AzureOpenAiService>();
 
 // Business services
+builder.Services.AddScoped<IPredictionStorageService, PredictionStorageService>();
+builder.Services.AddScoped<IEvaluationService, EvaluationService>();
 builder.Services.AddScoped<IStockAnalysisService, StockAnalysisService>();
+builder.Services.AddScoped<IPostMortemEngine, PostMortemEngine>();
+builder.Services.AddScoped<ILearningEngine, LearningEngine>();
+
+builder.Services.AddHostedService<DailyEvaluationWorker>();
 
 // CORS for frontend dev server
 builder.Services.AddCors(options =>
@@ -37,11 +43,38 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Ensure database is created
+// Ensure database is migrated and seeded
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.Migrate();
+
+    // Seed System Settings
+    if (!db.SystemSettings.Any(s => s.SettingKey == "max_daily_weight_adjustment_percent"))
+    {
+        db.SystemSettings.Add(new StockAnalyzer.Api.Models.SystemSetting { SettingKey = "max_daily_weight_adjustment_percent", SettingValue = "2.0" });
+    }
+    if (!db.SystemSettings.Any(s => s.SettingKey == "learning_mode"))
+    {
+        db.SystemSettings.Add(new StockAnalyzer.Api.Models.SystemSetting { SettingKey = "learning_mode", SettingValue = "AUTO" });
+    }
+
+    // Seed Predefined Factors
+    var predefinedFactors = new[] { "Valuation", "Momentum", "Sentiment", "Macro", "Institutional Flow" };
+    foreach (var f in predefinedFactors)
+    {
+        if (!db.LearningFactors.Any(lf => lf.FactorName == f))
+        {
+            db.LearningFactors.Add(new StockAnalyzer.Api.Models.LearningFactor
+            {
+                FactorName = f,
+                Description = "Predefined learning factor",
+                IsPredefined = true
+            });
+        }
+    }
+
+    db.SaveChanges();
 }
 
 // Configure the HTTP request pipeline

@@ -8,7 +8,9 @@ namespace StockAnalyzer.Api.Services;
 public class StockAnalysisService : IStockAnalysisService
 {
     private readonly IFinnhubService _finnhubService;
-    private readonly IOllamaService _ollamaService;
+    private readonly IAnalysisAiService _analysisAiService;
+    private readonly IPredictionStorageService _predictionStorageService;
+    private readonly ILearningEngine _learningEngine;
     private readonly AppDbContext _dbContext;
     private readonly ILogger<StockAnalysisService> _logger;
 
@@ -36,17 +38,21 @@ public class StockAnalysisService : IStockAnalysisService
 
     public StockAnalysisService(
         IFinnhubService finnhubService,
-        IOllamaService ollamaService,
+        IAnalysisAiService analysisAiService,
+        IPredictionStorageService predictionStorageService,
+        ILearningEngine learningEngine,
         AppDbContext dbContext,
         ILogger<StockAnalysisService> logger)
     {
         _finnhubService = finnhubService;
-        _ollamaService = ollamaService;
+        _analysisAiService = analysisAiService;
+        _predictionStorageService = predictionStorageService;
+        _learningEngine = learningEngine;
         _dbContext = dbContext;
         _logger = logger;
     }
 
-    // ─── AI Analysis (uses Ollama) ────────────────────────────────────
+    // ─── AI Analysis (uses Azure OpenAI) ─────────────────────────────
 
     public async Task<StockAnalysisResult> AnalyzeTickerAsync(string ticker)
     {
@@ -56,29 +62,84 @@ public class StockAnalysisService : IStockAnalysisService
         var cached = await GetCachedAnalysisAsync(ticker);
         if (cached != null)
         {
-            _logger.LogInformation("Cache hit for {Ticker} — refreshing quote", ticker);
-            try
+            // Log a prediction for today even for cached results
+            await _predictionStorageService.StorePredictionAsync(
+                cached,
+                promptVersion: "1.0",
+                modelVersion: "GPT-4o (Cached)",
+                learningContext: "{}",
+                marketRegime: "Normal",
+                dataConfidenceScore: 80
+            );
+
+            if (HasCurrentAnalysisContract(cached) || !_analysisAiService.IsConfigured)
             {
-                var (price, change) = await _finnhubService.RefreshQuoteAsync(ticker);
-                if (price > 0)
-                {
-                    cached.CurrentPrice = price;
-                    cached.PriceChangePercent = change;
-                }
+                _logger.LogInformation("Cache hit for {Ticker} — refreshing quote", ticker);
+                await RefreshCachedQuoteAsync(cached);
+                return cached;
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to refresh quote for {Ticker}, using cached price", ticker);
-            }
-            return cached;
+
+            _logger.LogInformation("Cache hit for {Ticker}, but cached analysis is missing the current prompt contract. Regenerating.", ticker);
         }
+
+        if (!_analysisAiService.IsConfigured)
+            throw new InvalidOperationException("Azure OpenAI is not configured. Set AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_DEPLOYMENT to run new analyses.");
 
         _logger.LogInformation("Cache miss for {Ticker}, fetching fresh data", ticker);
         var financialData = await _finnhubService.GetFinancialDataAsync(ticker);
-        var analysis = await _ollamaService.AnalyzeAsync(financialData);
+
+        // Calculate Data Confidence and Regime
+        int confidence = CalculateDataConfidence(financialData);
+        string regime = DetermineMarketRegime();
+
+        // Inject Learning Context if mode is AUTO or ASSIST
+        var modeSetting = await _dbContext.SystemSettings.FirstOrDefaultAsync(s => s.SettingKey == "learning_mode");
+        var learningMode = modeSetting?.SettingValue ?? "AUTO";
+        string learningContextJson = "Baseline";
+
+        if (learningMode == "AUTO" || learningMode == "ASSIST")
+        {
+            var sector = financialData.Profile?.Industry ?? "Global";
+            learningContextJson = await _learningEngine.GetLearningContextAsync(sector, regime);
+            financialData.LearningContextJson = learningContextJson;
+        }
+
+        var analysis = await _analysisAiService.AnalyzeAsync(financialData);
+        if (IsProviderFallback(analysis))
+        {
+            _logger.LogWarning("Analysis provider returned fallback for {Ticker}; skipping cache write", ticker);
+            return analysis;
+        }
+
         var category = analysis.Rating < 40 ? "HighRisk" : "LowRisk";
         await CacheAnalysisAsync(ticker, analysis, category);
+
+        await _predictionStorageService.StorePredictionAsync(
+            analysis,
+            promptVersion: "1.0", // from appsettings ideally
+            modelVersion: "GPT-4o", // from config
+            learningContext: learningContextJson,
+            marketRegime: regime,
+            dataConfidenceScore: confidence
+        );
+
         return analysis;
+    }
+
+    private int CalculateDataConfidence(AggregatedFinancialData data)
+    {
+        int score = 0;
+        if (data.Metrics.Count > 10) score += 40;
+        if (data.Quote != null && data.Quote.Current > 0) score += 20;
+        if (data.Competitors.Count > 0) score += 20;
+        if (data.RecentNews.Count > 0) score += 20;
+        return score == 0 ? 10 : score; // Minimum confidence 10
+    }
+
+    private string DetermineMarketRegime()
+    {
+        // Simple placeholder. In reality, we'd fetch SPY SMA 50/200, VIX, and Fed Funds Rate.
+        return "Normal";
     }
 
     public async Task<List<StockAnalysisResult>> AnalyzeBatchAsync(List<string> tickers)
@@ -105,17 +166,14 @@ public class StockAnalysisService : IStockAnalysisService
         {
             try
             {
-                var analysis = await AnalyzeTickerAsync(ticker);
-                results.Add(new StockQuoteSummary
+                var cachedSummary = await GetCachedSummaryAsync(ticker);
+                if (cachedSummary != null)
                 {
-                    Ticker = analysis.Ticker,
-                    CompanyName = analysis.CompanyName,
-                    CurrentPrice = analysis.CurrentPrice ?? 0,
-                    PriceChangePercent = analysis.PriceChangePercent ?? 0,
-                    Rating = analysis.Rating,
-                    RatingLabel = analysis.RatingLabel,
-                    SummaryVerdict = analysis.SummaryVerdict,
-                });
+                    results.Add(cachedSummary);
+                    continue;
+                }
+
+                results.Add(ToQuoteSummary(await AnalyzeTickerAsync(ticker)));
             }
             catch (Exception ex)
             {
@@ -146,15 +204,8 @@ public class StockAnalysisService : IStockAnalysisService
         {
             try
             {
-                var analysis = await AnalyzeTickerAsync(mover.Ticker);
-                mover.Rating = analysis.Rating;
-                mover.RatingLabel = analysis.RatingLabel;
-                mover.SummaryVerdict = analysis.SummaryVerdict;
-                // Update price from live analysis data
-                if (analysis.CurrentPrice.HasValue && analysis.CurrentPrice > 0)
-                    mover.CurrentPrice = analysis.CurrentPrice.Value;
-                if (analysis.PriceChangePercent.HasValue)
-                    mover.PriceChangePercent = analysis.PriceChangePercent.Value;
+                var cached = await GetCachedAnalysisAsync(mover.Ticker);
+                ApplyAnalysisToSummary(mover, cached ?? await AnalyzeTickerAsync(mover.Ticker), keepLiveQuote: cached != null);
             }
             catch (Exception ex)
             {
@@ -183,14 +234,8 @@ public class StockAnalysisService : IStockAnalysisService
         {
             try
             {
-                var analysis = await AnalyzeTickerAsync(pick.Ticker);
-                pick.Rating = analysis.Rating;
-                pick.RatingLabel = analysis.RatingLabel;
-                pick.SummaryVerdict = analysis.SummaryVerdict;
-                if (analysis.CurrentPrice.HasValue && analysis.CurrentPrice > 0)
-                    pick.CurrentPrice = analysis.CurrentPrice.Value;
-                if (analysis.PriceChangePercent.HasValue)
-                    pick.PriceChangePercent = analysis.PriceChangePercent.Value;
+                var cached = await GetCachedAnalysisAsync(pick.Ticker);
+                ApplyAnalysisToSummary(pick, cached ?? await AnalyzeTickerAsync(pick.Ticker), keepLiveQuote: cached != null);
             }
             catch (Exception ex)
             {
@@ -229,11 +274,13 @@ public class StockAnalysisService : IStockAnalysisService
 
     private static string DeriveRatingLabel(int rating) => rating switch
     {
-        >= 90 => "Near-Perfect",
-        >= 70 => "Strong Buy",
-        >= 40 => "Hold",
-        >= 20 => "High Risk",
-        _ => "Uninvestable"
+        >= 85 => "Strong Buy",
+        >= 70 => "Medium Buy",
+        >= 55 => "Weak Buy",
+        >= 45 => "Hold",
+        >= 30 => "Weak Sell",
+        >= 15 => "Medium Sell",
+        _ => "Strong Sell"
     };
 
     private async Task<StockAnalysisResult?> GetCachedAnalysisAsync(string ticker)
@@ -243,8 +290,74 @@ public class StockAnalysisService : IStockAnalysisService
             .OrderByDescending(c => c.CreatedAt)
             .FirstOrDefaultAsync();
         if (cached == null) return null;
-        return JsonSerializer.Deserialize<StockAnalysisResult>(cached.AnalysisJson,
+        var analysis = JsonSerializer.Deserialize<StockAnalysisResult>(cached.AnalysisJson,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        if (analysis != null)
+            analysis.RatingLabel = DeriveRatingLabel(analysis.Rating);
+        return analysis;
+    }
+
+    private static bool HasCurrentAnalysisContract(StockAnalysisResult analysis) =>
+        analysis.PriceEstimates.Count >= 5
+        && !string.IsNullOrWhiteSpace(analysis.MacroContext)
+        && !string.IsNullOrWhiteSpace(analysis.FinalVerdict);
+
+    private static bool IsProviderFallback(StockAnalysisResult analysis) =>
+        analysis.PriceEstimates.Count == 0
+        && analysis.SummaryVerdict.StartsWith("Analysis could not be completed", StringComparison.OrdinalIgnoreCase);
+
+    private async Task RefreshCachedQuoteAsync(StockAnalysisResult analysis)
+    {
+        try
+        {
+            var (price, change) = await _finnhubService.RefreshQuoteAsync(analysis.Ticker);
+            if (price > 0)
+            {
+                analysis.CurrentPrice = price;
+                analysis.PriceChangePercent = change;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to refresh quote for {Ticker}, using cached price", analysis.Ticker);
+        }
+    }
+
+    private async Task<StockQuoteSummary?> GetCachedSummaryAsync(string ticker)
+    {
+        var cached = await GetCachedAnalysisAsync(ticker);
+        if (cached == null) return null;
+
+        await RefreshCachedQuoteAsync(cached);
+        return ToQuoteSummary(cached);
+    }
+
+    private static StockQuoteSummary ToQuoteSummary(StockAnalysisResult analysis) => new()
+    {
+        Ticker = analysis.Ticker,
+        CompanyName = string.IsNullOrWhiteSpace(analysis.CompanyName) ? FinnhubService.GetCompanyName(analysis.Ticker) : analysis.CompanyName,
+        CurrentPrice = analysis.CurrentPrice ?? 0,
+        PriceChangePercent = analysis.PriceChangePercent ?? 0,
+        Rating = analysis.Rating,
+        RatingLabel = analysis.RatingLabel,
+        SummaryVerdict = analysis.SummaryVerdict,
+    };
+
+    private static void ApplyAnalysisToSummary(StockQuoteSummary summary, StockAnalysisResult analysis, bool keepLiveQuote)
+    {
+        summary.Rating = analysis.Rating;
+        summary.RatingLabel = analysis.RatingLabel;
+        summary.SummaryVerdict = analysis.SummaryVerdict;
+
+        if (string.IsNullOrWhiteSpace(summary.CompanyName))
+            summary.CompanyName = string.IsNullOrWhiteSpace(analysis.CompanyName) ? FinnhubService.GetCompanyName(summary.Ticker) : analysis.CompanyName;
+
+        if (keepLiveQuote) return;
+
+        if (analysis.CurrentPrice.HasValue && analysis.CurrentPrice > 0)
+            summary.CurrentPrice = analysis.CurrentPrice.Value;
+        if (analysis.PriceChangePercent.HasValue)
+            summary.PriceChangePercent = analysis.PriceChangePercent.Value;
     }
 
     private async Task CacheAnalysisAsync(string ticker, StockAnalysisResult analysis, string category)
